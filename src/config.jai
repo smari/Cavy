@@ -41,12 +41,21 @@ deinit_server :: (server: *ServerConfig) {
     free(server);
 }
 
+
 #scope_file
 
 #import "File";
 #import "Any";
 #import "Unicode";
 #import "Thread";
+
+accept_token :: (ch: string) #expand {
+    if `s[0] == ch[0] {
+        advance(*`s);
+        return ch, `s, true;
+    }
+}
+
 
 peek_next_token :: (st: *string) -> (tok: string, remainder: string, found: bool) {
     // Yes I guess we are making a tokenizer.
@@ -64,18 +73,9 @@ peek_next_token :: (st: *string) -> (tok: string, remainder: string, found: bool
             advance(*s);
             continue;
         }
-        if s[0] == #char "{" {
-            advance(*s);
-            return "{", s, true;
-        }
-        if s[0] == #char "}" {
-            advance(*s);
-            return "}", s, true;
-        }
-        if s[0] == #char ";" {
-            advance(*s);
-            return ";", s, true;
-        }
+        accept_token("{");
+        accept_token("}");
+        accept_token(";");
         if s[0] == #char "\"" {
             advance(*s);
             ident := s;
@@ -190,12 +190,13 @@ parse_config_file :: (filename: string) {
 }
 
 ConfigFile :: struct {
-    file_path:      string;  // File location
-    orig_file_data: string;  // The full contents of the loaded file.
-    file_data:      string;  // Unparsed remainder.
-    line:           int = 0;
-    col:            int = 0;
+    file_path       : string;  // File location
+    orig_file_data  : string;  // The full contents of the loaded file.
+    file_data       : string;  // Unparsed remainder.
+    line            : int = 0;
+    col             : int = 0;
 }
+
 
 deinit :: (x: *ConfigFile) { free(x.orig_file_data); }
 init :: (using x: *ConfigFile, path: string) {
