@@ -13,24 +13,17 @@
  #load "http.jai";
  #load "utils.jai";
 
-error :: (s: string, args: ..Any, errno:s32=1) {
-    print("ERROR: %\n", tprint(s, ..args));
-    exit(errno);
-}
-
-warning :: (s: string, args: ..Any) {
-    print("WARNING: %\n", tprint(s, ..args));
-}
-
+debug := false;
 
 connection_handle :: (server: *ServerConfig, socket: s32, address: sockaddr_in) {
     client : HTTPClientConnection;
     BUF_MAX :: 65536;
     request : [BUF_MAX]u8;
+    client.server = server;
     client.socket, client.address = socket, address;
     if client.socket < 0 error("accept");
 
-    print("🤪 Client connected from %\n", to_string(client.address));
+    notice("Client connected from %", to_string(client.address));
 
     n := read(client.socket, *request, BUF_MAX);
     if n < 0 error("reading from socket");
@@ -38,12 +31,10 @@ connection_handle :: (server: *ServerConfig, socket: s32, address: sockaddr_in) 
     http_handle_request(server, client, to_string(request));
 
     close(client.socket);
-    print("🤩 Client disconnected.\n");
+    notice("Client disconnected.");
 }
 
 server_start :: (using server: *ServerConfig) {
-    done := false;
-
     server_socket = socket(AF_INET, SOCK_STREAM, 0);
     if server_socket < 0 error("opening socket");
 
@@ -62,8 +53,8 @@ server_start :: (using server: *ServerConfig) {
 
     defer close(server_socket);
 
-    print("🥳 Listening on %:%\n", listen_host, listen_port);
-    while !done {
+    notice("Listening on %:%", listen_host, listen_port);
+    while !server.shutdown {
         socket, address := accept(server_socket);
         if socket < 0 { break; }
         connection_handle(server, socket, address);
@@ -75,7 +66,7 @@ setup_signal_handlers :: () {
     handle_sigint :: (sig: s32, info: *siginfo_t, secret: *void) #c_call {
         sigint_context: Context;
         push_context sigint_context {
-            print("\n🤕 SIGINT Intercepted! Shutting everything down.\n");
+            notice("SIGINT Intercepted! Shutting everything down.");
             for server: server_config {
                 close(server.server_socket);
             }
@@ -92,6 +83,17 @@ setup_signal_handlers :: () {
 
 
 main :: () {
+    idx := 1;
+    args := get_command_line_arguments();
+    defer array_reset(*args);
+    while idx < args.count {
+        if args[idx] == {
+            case "-d"; debug = true; notice("Debugging enabled.");
+            case; print("Unknown parameter %", args[idx]);
+        }
+        idx += 1;
+    }
+
     setup_signal_handlers();
     read_config();
     init_status_codes();

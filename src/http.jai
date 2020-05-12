@@ -3,6 +3,7 @@
 #import "File_Utilities";
 
 HTTPClientConnection :: struct {
+    server         : *ServerConfig;
     socket         : s32;
     address        : sockaddr_in;
     bytes_received : u64;
@@ -140,8 +141,9 @@ send_http_response :: (client: *HTTPClientConnection, response: *HTTPResponse) {
     //       as we go? Saves us from having to to_string() the entire thing!
     if response.status_code >= 300 {
         // TODO: Here we should check for custom error handlers.
+        add_response_header(response, "Content-Type", tprint("text/html; charset=%", client.server.default_charset));
         response_set_body(response,
-            tprint("<html><head></head><body><h1>% %</h1></body></html>",
+            tprint("<html>\n<head>\n  <title>%1 %2</title>\n</head>\n<body>\n  <h1>%1 %2</h1>\n</body>\n</html>\n",
             response.status_code, get_status_code(response.status_code)));
     }
 
@@ -203,7 +205,6 @@ parse_header :: (header: string) -> key: string, value: string, success: bool #m
     return key = key, value = header, success = true;
 }
 
-
 parse_request_uri :: (uri: string) -> URI, success: bool {
     // https://www.w3.org/Protocols/rfc2616/rfc2616-sec5.html
     resp : URI;
@@ -251,7 +252,6 @@ parse_request_uri :: (uri: string) -> URI, success: bool {
 
 }
 
-
 resolve_location :: (server: *ServerConfig, request: *HTTPRequest, response: *HTTPResponse) {
     // TODO: Handle URL maps and dispatch to the correct handler.
     // HTTP/1.0 -> /...
@@ -259,11 +259,22 @@ resolve_location :: (server: *ServerConfig, request: *HTTPRequest, response: *HT
 
     print("Resolving location for %\n", request.url);
     uri := parse_request_uri(request.url);
+
     /*if server.server_name != "_" && server.server_name != uri.host {
         print("Request is to %, but we're on %.\n", uri.host, server.server_name);
     }*/
+
     local_file := join(server.root, uri.abs_path);
-    if local_file[local_file.count-1] == #char "/" {
+    // Check if it's a directory!
+    if is_dir(local_file) {
+
+        if local_file[local_file.count-1] != #char "/" {
+            old := local_file;
+            local_file = join(old, "/");
+            free(old);
+        }
+
+        // First we try indexes
         found := false;
         for index:server.index_filenames {
             idxfile := join(local_file, index);
@@ -273,11 +284,17 @@ resolve_location :: (server: *ServerConfig, request: *HTTPRequest, response: *HT
                 break;
             }
         }
-        if !found {
-            response.status_code = 404;
-            return;
+
+        if !found && server.autoindex {
+            print("Requested autoindex of %", local_file);
+            autoindex_generate(request, response);
         }
+
+        // Finally we 404.
+        response.status_code = 404;
+        return;
     }
+
     print("Resolved to %\n", local_file);
     if ends_with(local_file, ".html") {
         add_response_header(response, "Content-Type", "text/html");

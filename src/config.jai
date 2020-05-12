@@ -3,10 +3,14 @@ ServerConfig :: struct {
     server_socket:   s32;
     listen_host:     string = "0.0.0.0";
     listen_port:     u16 = 80;
+    default_charset: string = "utf-8";
     server_name:     string;
     root:            string;
-    index_filenames: [..]string; // TODO make this a list.
+    autoindex:       bool = true;
+    index_filenames: [..]string;
     add_headers:     [..]HTTPHeader;
+
+    shutdown:        bool = false;
 };
 
 to_string :: (server: *ServerConfig) -> string {
@@ -24,8 +28,6 @@ read_config :: () {
 #import "File";
 #import "Any";
 #import "Unicode";
-
-
 
 peek_next_token :: (st: *string) -> (tok: string, remainder: string, found: bool) {
     // Yes I guess we are making a tokenizer.
