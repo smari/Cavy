@@ -136,10 +136,10 @@ send_http_response :: (client: *HTTPClientConnection, status_code: int) {
 send_http_response :: (using client: *HTTPClientConnection) {
     // TODO: Rather than send it all as one big string, how about we send bits
     //       as we go? Saves us from having to to_string() the entire thing!
-    //          - SMc 12020-05-07
+    //          - smari 12020-05-07
     // Update: Now to_string() is get_response_headers() and only returns
     //       headers. As a result, response.message_body is sent separately.
-    //          - SMc 12020-05-12
+    //          - smari 12020-05-12
     if !response.version response.version = request.version;
     if response.status_code >= 300 {
         // TODO: Here we should check for custom error handlers.

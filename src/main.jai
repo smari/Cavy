@@ -40,7 +40,7 @@ connection_handle :: (server: *ServerConfig, socket: s32, address: sockaddr_in) 
 }
 
 server_thread_start :: (thread: *Thread) -> s64 {
-    server: *ServerConfig = config.servers[0];
+    server: *ServerConfig = cast(*ServerConfig) thread.data;
     notice("Running inside of thread %.", thread.index);
     #if OS_LINUX {
         // Custom thread names for Linux.
@@ -130,6 +130,7 @@ main :: () {
     for server: config.servers {
         server.shutdown = false;
         thread_init(*server.thread, server_thread_start);
+        server.thread.data = server;
         // server_start(server);
         notice("Starting thread for server %", server.server_name);
         thread_start(*server.thread);
