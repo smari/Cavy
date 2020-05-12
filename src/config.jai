@@ -166,6 +166,7 @@ parse_config_server :: (input: *string) {
     while true {
         tok, found := peek_next_token(input);
         if tok == "}" {
+            eat_token(input, "}");
             break;
         } else {
             parse_statement(input, cur_server);
