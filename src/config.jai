@@ -8,8 +8,12 @@ ServerConfig :: struct {
     root:            string;
     autoindex:       bool = true;
     index_filenames: [..]string;
-    add_headers:     [..]HTTPHeader;
+    add_headers:     Table(string, string);
+    always_headers:  [..]string;
+    clients:         [..]HTTPClientConnection;
 
+    thread:          Thread;
+    running:         bool = false;
     shutdown:        bool = false;
 };
 
@@ -17,10 +21,24 @@ to_string :: (server: *ServerConfig) -> string {
     return tprint("%", <<server);
 }
 
-server_config : [..]*ServerConfig;
+Config :: struct {
+    user            : string;
+    pid             : string;
+    pidfile         : string;
+    servers         : [..]*ServerConfig;
+};
+
+config : Config;
 
 read_config :: () {
     parse_config_file("default.config");
+}
+
+deinit_server :: (server: *ServerConfig) {
+    array_reset(*server.index_filenames);
+    array_reset(*server.always_headers);
+    table_reset(*server.add_headers);
+    free(server);
 }
 
 #scope_file
@@ -28,6 +46,7 @@ read_config :: () {
 #import "File";
 #import "Any";
 #import "Unicode";
+#import "Thread";
 
 peek_next_token :: (st: *string) -> (tok: string, remainder: string, found: bool) {
     // Yes I guess we are making a tokenizer.
@@ -123,15 +142,14 @@ parse_statement :: (input: *string, using cur_server: *ServerConfig) {
                 array_add(*index_filenames, get_next_token(input));
             }
         case "add_header";
-            header: HTTPHeader;
-            header.key = get_next_token(input);
-            header.value = get_next_token(input);
-            array_add(*add_headers, header);
+            key := get_next_token(input);
+            value := get_next_token(input);
+            table_add(*add_headers, key, value);
             while true {
                 tok, temp, found = peek_next_token(input);
                 if tok == ";" { break; }
                 if tok == "always" {
-                    header.always = true;
+                    array_add(*always_headers, key);
                 }
             }
     }
@@ -142,7 +160,9 @@ parse_config_server :: (input: *string) {
     eat_token(input, "{");
     cur_server: *ServerConfig;
     cur_server = New(ServerConfig);
-    array_add(*server_config, cur_server);
+    array_add(*config.servers, cur_server);
+
+    table_add(*cur_server.add_headers, "Server", SERVER_STRING);
     while true {
         tok, found := peek_next_token(input);
         if tok == "}" {

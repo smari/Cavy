@@ -4,7 +4,7 @@
 #import "Socket";
 
 /* Goals:
-   [ ] Handle basic HTTP/1.0 requests
+   [x] Handle basic HTTP/1.0 requests
    [ ] Handle SSL
    [ ] Multiple concurrent connections
    [ ] Improve socket library
@@ -13,10 +13,13 @@
  #load "http.jai";
  #load "utils.jai";
 
+SERVER_NAME     :: "Cavy";
+SERVER_VERSION  :: "0.0.1";
+SERVER_STRING   :: #run sprint("% v%", SERVER_NAME, SERVER_VERSION);
 debug := false;
 
 connection_handle :: (server: *ServerConfig, socket: s32, address: sockaddr_in) {
-    client : HTTPClientConnection;
+    client : *HTTPClientConnection = alloc(size_of(HTTPClientConnection));
     BUF_MAX :: 65536;
     request : [BUF_MAX]u8;
     client.server = server;
@@ -28,13 +31,32 @@ connection_handle :: (server: *ServerConfig, socket: s32, address: sockaddr_in) 
     n := read(client.socket, *request, BUF_MAX);
     if n < 0 error("reading from socket");
 
-    http_handle_request(server, client, to_string(request));
+    http_handle_request(client, to_string(request));
 
     close(client.socket);
-    notice("Client disconnected.");
+    table_reset(*client.request.headers);
+    table_reset(*client.response.headers);
+    free(client);
+}
+
+server_thread_start :: (thread: *Thread) -> s64 {
+    server: *ServerConfig = config.servers[0];
+    notice("Running inside of thread %.", thread.index);
+    #if OS_LINUX {
+        // Custom thread names for Linux.
+        shortname := server.server_name;
+        if shortname.count > 15 shortname.count = 15;
+        shortname_c := to_c_string(shortname);
+        res := pthread_setname_np(thread.thread_handle, shortname_c);
+        free(shortname_c);
+    }
+    server_start(server);
+    notice("Thread % terminating.", thread.index);
+    return 0;
 }
 
 server_start :: (using server: *ServerConfig) {
+    server.running = true;
     server_socket = socket(AF_INET, SOCK_STREAM, 0);
     if server_socket < 0 error("opening socket");
 
@@ -59,6 +81,7 @@ server_start :: (using server: *ServerConfig) {
         if socket < 0 { break; }
         connection_handle(server, socket, address);
     }
+    server.running = false;
 }
 
 // Signal handling
@@ -66,10 +89,9 @@ setup_signal_handlers :: () {
     handle_sigint :: (sig: s32, info: *siginfo_t, secret: *void) #c_call {
         sigint_context: Context;
         push_context sigint_context {
-            notice("SIGINT Intercepted! Shutting everything down.");
-            for server: server_config {
-                close(server.server_socket);
-            }
+            // Need to set up temporary storage here.
+            warning("SIGINT Intercepted! Shutting everything down.");
+            shutdown();
         }
     }
 
@@ -81,6 +103,14 @@ setup_signal_handlers :: () {
     sigaction(SIGINT, *sigint, *regular_sigint);
 }
 
+shutdown :: () {
+    for server: config.servers {
+        server.shutdown = true;
+        close(server.server_socket);
+        thread_destroy(*server.thread);
+        deinit_server(server);
+    }
+}
 
 main :: () {
     idx := 1;
@@ -97,7 +127,25 @@ main :: () {
     setup_signal_handlers();
     read_config();
     init_status_codes();
-    for server: server_config {
-        server_start(server);
+    for server: config.servers {
+        server.shutdown = false;
+        thread_init(*server.thread, server_thread_start);
+        // server_start(server);
+        notice("Starting thread for server %", server.server_name);
+        thread_start(*server.thread);
     }
+
+    done := false;
+    while !done {
+        count := 0;
+        for server: config.servers {
+            done = true;
+            if server.shutdown continue;
+            done = false;
+            count += 1;
+        }
+        sleep_milliseconds(1000);
+    }
+
+    shutdown();
 }

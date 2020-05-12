@@ -1,34 +1,31 @@
 #import "Bucket_Array";
 #import "Hash_Table";
 #import "File_Utilities";
+#load "autoindex.jai";
 
 HTTPClientConnection :: struct {
     server         : *ServerConfig;
+    request        : HTTPRequest;
+    response       : HTTPResponse;
     socket         : s32;
     address        : sockaddr_in;
     bytes_received : u64;
     bytes_sent     : u64;
-}
-
-HTTPHeader :: struct {
-    key            : string;
-    value          : string;
-
-    // TODO: Decide if this should be broken out into its own struct.
-    always         : bool;
+    thread         : Thread;
 }
 
 HTTPRequest :: struct {
-    verb           : string;
     version        : string;
+    verb           : string;
     url            : string;
-    headers        : Bucket_Array(HTTPHeader, 30);
+    headers        : Table(string, string);
     header_count   : int;
 }
 
 HTTPResponse :: struct {
+    version        : string;
     status_code    : int;
-    headers        : Bucket_Array(HTTPHeader, 30);
+    headers        : Table(string, string);
     header_count   : int;
     message_body   : string;
 }
@@ -41,6 +38,7 @@ Scheme :: enum {
 URI :: struct {
     scheme         : Scheme;
     host           : string;
+    port           : u16;
     abs_path       : string;
 }
 
@@ -131,59 +129,54 @@ init_status_codes :: () {
 HTTP_VERBS :: {:string: "GET", "POST", "PUT", "DELETE", "HEAD", "CONNECT" };
 
 send_http_response :: (client: *HTTPClientConnection, status_code: int) {
-    response: HTTPResponse;
-    response.status_code = status_code;
-    send_http_response(client, *response);
+    client.response.status_code = status_code;
+    send_http_response(client);
 }
 
-send_http_response :: (client: *HTTPClientConnection, response: *HTTPResponse) {
+send_http_response :: (using client: *HTTPClientConnection) {
     // TODO: Rather than send it all as one big string, how about we send bits
     //       as we go? Saves us from having to to_string() the entire thing!
+    //          - SMc 12020-05-07
+    // Update: Now to_string() is get_response_headers() and only returns
+    //       headers. As a result, response.message_body is sent separately.
+    //          - SMc 12020-05-12
+    if !response.version response.version = request.version;
     if response.status_code >= 300 {
         // TODO: Here we should check for custom error handlers.
-        add_response_header(response, "Content-Type", tprint("text/html; charset=%", client.server.default_charset));
-        response_set_body(response,
+        add_response_header(*response, "Content-Type", tprint("text/html; charset=%", client.server.default_charset));
+        response_set_body(*response,
             tprint("<html>\n<head>\n  <title>%1 %2</title>\n</head>\n<body>\n  <h1>%1 %2</h1>\n</body>\n</html>\n",
             response.status_code, get_status_code(response.status_code)));
     }
 
-    add_response_header(response, "Date", get_iso_date());
+    add_response_header(*response, "Date", get_iso_date());
+    add_response_header(*response, "Content-Length", tprint("%", response.message_body.count));
 
-    respstr := to_string(<<response);
-    write(client.socket, respstr.data, cast(u64)respstr.count);
+    respstr := get_response_headers(response);
+    write(socket, respstr);
+    write(socket, response.message_body);
 }
 
 add_response_header :: (response: *HTTPResponse, key: string, value: string) {
-    header: HTTPHeader;
-    header.key = key;
-    header.value = value;
-    bucket_array_add(*response.headers, header);
-}
-
-add_response_header :: (response: *HTTPResponse, header: HTTPHeader) {
-    bucket_array_add(*response.headers, header);
+    table_add(*response.headers, key, value);
 }
 
 response_set_body :: (using response: *HTTPResponse, body: string) {
     message_body = body;
 }
 
-to_string :: (using response: HTTPResponse) -> string {
+get_response_headers :: (using response: HTTPResponse) -> string {
     str: String_Builder;
-    append(*str, tprint("HTTP/1.0 % %\r\n", status_code, get_status_code(status_code)));
-    for headers {
-        append(*str, tprint("%: %\r\n", it.key, it.value));
+    append(*str, tprint("% % %\r\n", version, status_code, get_status_code(status_code)));
+    for value,key:headers {
+        append(*str, tprint("%: %\r\n", key, value));
     }
     append(*str, "\r\n");
-    append(*str, message_body);
     return builder_to_string(*str);
 }
 
 add_request_header :: (request: *HTTPRequest, key: string, value: string) {
-    header: HTTPHeader;
-    header.key = copy_string(key);
-    header.value = copy_string(value);
-    bucket_array_add(*request.headers, header);
+    table_add(*request.headers, key, value);
 }
 
 parse_header :: (header: string) -> key: string, value: string, success: bool #must {
@@ -233,7 +226,15 @@ parse_request_uri :: (uri: string) -> URI, success: bool {
             case "https:"; resp.scheme = Scheme.HTTPS;
             case "http:"; resp.scheme = Scheme.HTTP;
         }
-        resp.host = parts[2];
+        // TODO: Add support for BasicAuth strings.
+        host_port := split(parts[2], ":");
+        resp.host = copy_string(host_port[0]);
+        if host_port.count == 1 {
+            resp.port = 80;
+        } else {
+            resp.port = parse_int(*host_port[1], u16);
+        }
+        array_reset(*host_port);
         start = 3;
     }
     // TODO: Unimplemented: Check for authority (for CONNECT method) (see standard)
@@ -241,37 +242,37 @@ parse_request_uri :: (uri: string) -> URI, success: bool {
     abs_path_parts : [..]string;
     for start..parts.count-1 {
         if parts[it] == "" continue;
-        // TODO: We're stripping ".." for security,
+        // TODO: We're stripping ".." for security, but might want to be smarter about that.
         if parts[it] == ".." continue;
         array_add(*abs_path_parts, parts[it]);
     }
     resp.abs_path = join(..abs_path_parts, separator="/", separator_before_first=true);
     if resp.abs_path == "" resp.abs_path = "/";
 
+    array_reset(*parts);
     return resp, true;
-
 }
 
-resolve_location :: (server: *ServerConfig, request: *HTTPRequest, response: *HTTPResponse) {
+
+resolve_location :: (using client: *HTTPClientConnection) {
     // TODO: Handle URL maps and dispatch to the correct handler.
     // HTTP/1.0 -> /...
     // HTTP/1.1 -> https://foo.bar/...
 
-    print("Resolving location for %\n", request.url);
     uri := parse_request_uri(request.url);
 
     /*if server.server_name != "_" && server.server_name != uri.host {
         print("Request is to %, but we're on %.\n", uri.host, server.server_name);
     }*/
-
     local_file := join(server.root, uri.abs_path);
     // Check if it's a directory!
     if is_dir(local_file) {
-
-        if local_file[local_file.count-1] != #char "/" {
-            old := local_file;
-            local_file = join(old, "/");
-            free(old);
+        // Permanent redirect if the server asked for a dir without a trailing slash.
+        if request.url[request.url.count-1] != #char "/" {
+            response.status_code = 301;
+            new_url := join(request.url, "/");
+            add_response_header(*response, "Location", new_url);
+            return;
         }
 
         // First we try indexes
@@ -279,40 +280,48 @@ resolve_location :: (server: *ServerConfig, request: *HTTPRequest, response: *HT
         for index:server.index_filenames {
             idxfile := join(local_file, index);
             if file_exists(idxfile) {
+                free(local_file);
                 local_file = idxfile;
                 found = true;
                 break;
             }
         }
 
+        // If no index found, try to autoindex
         if !found && server.autoindex {
-            print("Requested autoindex of %", local_file);
-            autoindex_generate(request, response);
+            index := autoindex_generate(*request, local_file);
+            response_set_body(*response, index);
+            add_response_header(*response, "Content-Type", "text/html");
+            return;
         }
 
-        // Finally we 404.
-        response.status_code = 404;
-        return;
+        // Finally we 404 if still not found.
+        if !found {
+            response.status_code = 404;
+            return;
+        }
     }
 
-    print("Resolved to %\n", local_file);
+    // Either resolved to a file or found an index file:
     if ends_with(local_file, ".html") {
-        add_response_header(response, "Content-Type", "text/html");
+        add_response_header(*response, "Content-Type", "text/html");
     }
     buf, success := read_entire_file(local_file);
     if !success { response.status_code = 404; return; }
-    response_set_body(response, buf);
+    response_set_body(*response, buf);
+    free(local_file);
 }
 
-http_handle_request :: (server: *ServerConfig, client: HTTPClientConnection, requestbody: string) {
-    request : HTTPRequest;
-
+http_handle_request :: (using client: *HTTPClientConnection, requestbody: string) {
     lines := split(requestbody, "\r\n");
+    defer array_reset(*lines);
     if !lines.count return;
     first_line := split(lines[0], " ");
+    defer array_reset(*first_line);
 
     if array_find(HTTP_VERBS, first_line[0]) {
         if first_line.count < 3 {
+            // We need at minimum a verb, a URL, and a version.
             return;
         }
         request.verb = copy_string(first_line[0]);
@@ -329,14 +338,16 @@ http_handle_request :: (server: *ServerConfig, client: HTTPClientConnection, req
             }
         }
 
-        response : HTTPResponse;
+        response.version = "";
         response.status_code = 200;
-        for header:server.add_headers {
+        for value,key:client.server.add_headers {
             // Adding headers that should always be added.
-            add_response_header(*response, header);
+            add_response_header(*response, key, value);
         }
-        resolve_location(server, *request, *response);
-        send_http_response(*client, *response);
+        resolve_location(client);
+        send_http_response(client);
+
+        reset_temporary_storage();
     } else {
         // We got a nonsense verb, or nothing at all.
         warning("Don't know what '%' means!", first_line[0]);
