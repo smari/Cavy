@@ -23,11 +23,13 @@ debug := false;
 
 connection_handle :: (server: *ServerConfig, socket: s32, address: sockaddr_in) {
     client : *HTTPClientConnection = alloc(size_of(HTTPClientConnection));
-    // TODO: ALlocating 30 slots to avoid a crash on Table.
+
+    array_add(*server.clients, client);
+
     client.request.headers = New(Table(string, string));
     client.response.headers = New(Table(string, string));
-    init(client.request.headers, slots_to_allocate=30);
-    init(client.response.headers, slots_to_allocate=30);
+    init(client.request.headers);
+    init(client.response.headers);
 
     request : *u8 = alloc(BUFFER_MAX);
     client.server = server;
@@ -48,6 +50,7 @@ threadpool_task_process :: (client: *HTTPClientConnection) {
     http_handle_request(client);
 
     close(client.socket);
+    array_unordered_remove_by_value(*client.server.clients, client);
     table_reset(client.request.headers);
     table_reset(client.response.headers);
     free(client.requestbody);
@@ -137,6 +140,7 @@ init_signal_handlers :: () {
 
 init_threadpool :: () {
     using config.threadpool;
+    num_threads = config.worker_threads;
     threadpool_start(*config.threadpool);
     notice("Started threadpool with % threads.", num_threads);
 }

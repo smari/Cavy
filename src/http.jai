@@ -367,7 +367,6 @@ http_handle_request :: (using client: *HTTPClientConnection) {
         }
         resolve_location(client);
         send_http_response(client);
-
         reset_temporary_storage();
     } else {
         // We got a nonsense verb, or nothing at all.
