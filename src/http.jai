@@ -4,7 +4,9 @@
 #load "autoindex.jai";
 
 HTTPClientConnection :: struct {
+    reqid          : string;
     server         : *ServerConfig;
+    requestbody    : string;
     request        : HTTPRequest;
     response       : HTTPResponse;
     socket         : s32;
@@ -18,14 +20,14 @@ HTTPRequest :: struct {
     version        : string;
     verb           : string;
     url            : string;
-    headers        : Table(string, string);
+    headers        : *Table(string, string);
     header_count   : int;
 }
 
 HTTPResponse :: struct {
     version        : string;
     status_code    : int;
-    headers        : Table(string, string);
+    headers        : *Table(string, string);
     header_count   : int;
     message_body   : string;
 }
@@ -140,6 +142,7 @@ send_http_response :: (using client: *HTTPClientConnection) {
     // Update: Now to_string() is get_response_headers() and only returns
     //       headers. As a result, response.message_body is sent separately.
     //          - smari 12020-05-12
+    bytes : s64;
     if !response.version response.version = request.version;
     if response.status_code >= 300 {
         // TODO: Here we should check for custom error handlers.
@@ -151,14 +154,25 @@ send_http_response :: (using client: *HTTPClientConnection) {
 
     add_response_header(*response, "Date", get_iso_date());
     add_response_header(*response, "Content-Length", tprint("%", response.message_body.count));
+    add_response_header(*response, "X-Request-Id", client.reqid);
 
     respstr := get_response_headers(response);
-    write(socket, respstr);
-    write(socket, response.message_body);
+    bytes = write(socket, respstr);
+    if bytes == -1 {
+        if errno() == {
+            case EPIPE; notice("Client disappeared."); return;
+        }
+    }
+    bytes = write(socket, response.message_body);
+    if bytes == -1 {
+        if errno() == {
+            case EPIPE; notice("Client disappeared."); return;
+        }
+    }
 }
 
 add_response_header :: (response: *HTTPResponse, key: string, value: string) {
-    table_add(*response.headers, key, value);
+    table_add(response.headers, key, value);
 }
 
 response_set_body :: (using response: *HTTPResponse, body: string) {
@@ -176,15 +190,15 @@ get_response_headers :: (using response: HTTPResponse) -> string {
 }
 
 add_request_header :: (request: *HTTPRequest, key: string, value: string) {
-    table_add(*request.headers, key, value);
+    table_add(request.headers, key, value);
 }
 
 parse_header :: (header: string) -> key: string, value: string, success: bool #must {
     key : string;
     key.data = header.data;
     key.count = header.count;
+    orig := header;
     if header.count == 0 { return "", "", false; }
-
     while true {
         if header[0] == #char "\r" { return "", "", false; }
         if header[0] == #char ":" {
@@ -194,6 +208,10 @@ parse_header :: (header: string) -> key: string, value: string, success: bool #m
             break;
         }
         advance(*header);
+        if header.count == 0 {
+            warning("Received malformed header '%'", orig);
+            return "", "", false;
+        }
     }
     return key = key, value = header, success = true;
 }
@@ -303,6 +321,7 @@ resolve_location :: (using client: *HTTPClientConnection) {
     }
 
     // Either resolved to a file or found an index file:
+    // TODO: Here we should give generic MIME info.
     if ends_with(local_file, ".html") {
         add_response_header(*response, "Content-Type", "text/html");
     }
@@ -312,7 +331,7 @@ resolve_location :: (using client: *HTTPClientConnection) {
     free(local_file);
 }
 
-http_handle_request :: (using client: *HTTPClientConnection, requestbody: string) {
+http_handle_request :: (using client: *HTTPClientConnection) {
     lines := split(requestbody, "\r\n");
     defer array_reset(*lines);
     if !lines.count return;
@@ -330,13 +349,15 @@ http_handle_request :: (using client: *HTTPClientConnection, requestbody: string
 
         for line: lines {
             if it_index == 0 continue; // We've already done first line.
+            if !line break; // Empty line does indicate that we're done.
             key, value, success := parse_header(line);
             if success {
                 add_request_header(*request, key, value);
             } else {
-                // TODO: Here we should parse request body!
+                // TODO: How do we handle failure?
             }
         }
+        // TODO: Here we should parse request body!
 
         response.version = "";
         response.status_code = 200;
