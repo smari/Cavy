@@ -1,20 +1,20 @@
 // Config file format
 ServerConfig :: struct {
-    server_socket:   s32;
-    listen_host:     string = "0.0.0.0";
-    listen_port:     u16 = 80;
-    default_charset: string = "utf-8";
-    server_name:     string;
-    root:            string;
-    autoindex:       bool = true;
-    index_filenames: [..]string;
-    add_headers:     Table(string, string);
-    always_headers:  [..]string;
-    clients:         [..]HTTPClientConnection;
+    server_socket   : s32;
+    listen_host     : string = "0.0.0.0";
+    listen_port     : u16 = 80;
+    default_charset : string = "utf-8";
+    server_name     : string;
+    root            : string;
+    autoindex       : bool = true;
+    index_filenames : [..]string;
+    add_headers     : Table(string, string);
+    always_headers  : [..]string;
+    clients         : [..]*HTTPClientConnection;
 
-    thread:          Thread;
-    running:         bool = false;
-    shutdown:        bool = false;
+    thread          : Thread;
+    running         : bool = false;
+    shutdown        : bool = false;
 };
 
 to_string :: (server: *ServerConfig) -> string {
@@ -23,9 +23,11 @@ to_string :: (server: *ServerConfig) -> string {
 
 Config :: struct {
     user            : string;
-    pid             : string;
+    pid             : u32;
     pidfile         : string;
     servers         : [..]*ServerConfig;
+
+    worker_threads  : u32 = 10;
     threadpool      : ThreadPool; // (*HTTPClientConnection);
 };
 
