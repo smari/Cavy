@@ -198,6 +198,41 @@ ConfigFile :: struct {
     col             : int = 0;
 }
 
+/*
+ConfigBlock :: struct {
+    blocktype           : Type;
+    allowed_directives  : Table(string, ConfigDirective);
+}
+
+ConfigDirectiveHandler :: #type (tokens: [..]string) -> bool;
+
+ConfigDirective :: struct {
+    name            : string;
+    parameters      : int;
+    handler         : ConfigDirectiveHandler;
+}
+
+config_blocks : Table(string, ConfigBlock);
+
+create_block :: (name: string, type: Type) {
+    block : ConfigBlock;
+    block.type = type;
+    table_add(*config_blocks, name, block);
+}
+
+create_directive :: (parameters: int, handler: ConfigDirectiveHandler) -> ConfigDirective {
+    dir : ConfigDirective;
+    dir.parameters = parameters;
+    dir.handler = handler;
+    return dir;
+}
+
+
+init_directives :: () {
+    block := create_block("CORE");
+    add_config_directive(block, "pidfile", create_directive(1, set_pidfile));
+}
+*/
 
 deinit :: (x: *ConfigFile) { free(x.orig_file_data); }
 init :: (using x: *ConfigFile, path: string) {
