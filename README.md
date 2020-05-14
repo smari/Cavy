@@ -1,21 +1,34 @@
 
 # Cavy
 
-A HTTP daemon written in Jai. It's a bit like a member of the Caviidae family.
+A toy HTTP daemon written in Jai. It's a bit like a member of the Caviidae family.
 
+I highly recommend against using this web server in reality. Use something like
+nginx instead. I wrote this server in order to experiment with Jai and refresh
+some skills. It's not intended as more than a plaything.
 
-## Building
+## Building and running
 
 Just run:
 ```
-$ jai first.jai
+$ jai build.jai
 ```
+
+The executable is `cavy`. Enjoy!
 
 ## Features
 
-None.
+ - [x] Basic HTTP/1.0 and HTTP/1.1 requests
+ - [x] Autoindexing
+ - [x] Nginx-style config files
+ - [ ] HTTPS
+ - [x] Multithreading (per server coordinators and a threadpool)
 
 ## TODO
 
-Everything
-
+ - [ ] Check for memory leaks
+ - [ ] Fix SIGINT handler so it actually exits
+ - [ ] Support more configuration/generalize config parser
+ - [ ] Support location directives
+ - [ ] Customizable error pages
+ - [ ] Customizable index pages
