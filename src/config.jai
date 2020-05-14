@@ -26,6 +26,7 @@ Config :: struct {
     pid             : string;
     pidfile         : string;
     servers         : [..]*ServerConfig;
+    threadpool      : ThreadPool; // (*HTTPClientConnection);
 };
 
 config : Config;
