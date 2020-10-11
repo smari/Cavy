@@ -128,7 +128,7 @@ init_status_codes :: () {
     add_status_code(599, "Network Connect Timeout Error");
 }
 
-HTTP_VERBS :: {:string: "GET", "POST", "PUT", "DELETE", "HEAD", "CONNECT" };
+HTTP_VERBS :: string.["GET", "POST", "PUT", "DELETE", "HEAD", "CONNECT"];
 
 send_http_response :: (client: *HTTPClientConnection, status_code: int) {
     client.response.status_code = status_code;

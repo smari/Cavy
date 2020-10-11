@@ -97,8 +97,8 @@ is_socket :: (filename: string) -> bool {
 get_iso_date :: () -> string {
     // Is:          Sun May  3 22:30:14 2020
     // Should be:   Sun, 03 May 2020 21:50:17 GMT
-    days :: {:string: "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
-    month :: {:string: "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+    days :: string.["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    month :: string.["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
     rawtime: time_t;
     time(*rawtime);
     info : *tm = localtime(*rawtime);
@@ -112,6 +112,13 @@ get_iso_date :: () -> string {
             formatInt(info.tm_sec, minimum_digits=2),
             "UTC" // TODO: Return something other than UTC.
         );
+}
+
+// Thread utils
+#if OS == .LINUX {
+    pthreads :: #foreign_system_library "libpthread";
+    pthread_setname_np :: (thread: pthread_t, name: *u8) -> s32 #foreign pthreads;
+    pthread_getname_np :: (thread: pthread_t, name: *u8, len: size_t) -> s32 #foreign pthreads;
 }
 
 #scope_file

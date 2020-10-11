@@ -65,7 +65,7 @@ server_thread_start :: (thread: *Thread) -> s64 {
     context.temporary_storage = *ts;
 
     notice("Running inside of thread %.", thread.index);
-    #if OS_LINUX {
+    #if OS == .LINUX {
         // Custom thread names for Linux.
         shortname := server.server_name;
         if shortname.count > 15 shortname.count = 15;

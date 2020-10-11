@@ -1,20 +1,21 @@
 // Config file format
 ServerConfig :: struct {
-    server_socket   : s32;
-    listen_host     : string = "0.0.0.0";
-    listen_port     : u16 = 80;
+    listen_host     : string = "0.0.0.0";   @compound:listen
+    listen_port     : u16 = 80;             @compound:listen
     default_charset : string = "utf-8";
     server_name     : string;
     root            : string;
     autoindex       : bool = true;
-    index_filenames : [..]string;
-    add_headers     : Table(string, string);
-    always_headers  : [..]string;
-    clients         : [..]*HTTPClientConnection;
+    index_filenames : [..]string;           @name:index
+    add_headers     : Table(string, string);@name:add_header
+    always_headers  : [..]string;           @noconfig // temporarily @noconfig
 
-    thread          : Thread;
-    running         : bool = false;
-    shutdown        : bool = false;
+    // Runtime stuff:
+    server_socket   : s32;                  @noconfig
+    thread          : Thread;               @noconfig
+    clients         : [..]*HTTPClientConnection; @noconfig
+    running         : bool = false;         @noconfig
+    shutdown        : bool = false;         @noconfig
 };
 
 to_string :: (server: *ServerConfig) -> string {
@@ -23,13 +24,21 @@ to_string :: (server: *ServerConfig) -> string {
 
 Config :: struct {
     user            : string;
-    pid             : u32;
+    pid             : u32;               @noconfig
     pidfile         : string;
-    servers         : [..]*ServerConfig;
+    servers         : [..]*ServerConfig; @block:server
 
-    worker_threads  : u32 = 10;
-    threadpool      : ThreadPool; // (*HTTPClientConnection);
+    worker_threads  : u32 = 10;          @noconfig
+    threadpool      : ThreadPool;        @noconfig // (*HTTPClientConnection);
 };
+
+HTTPConfig :: struct {
+    sendfile        : bool;
+    tcp_nopush      : bool;
+    access_log      : string;
+    error_log       : string;
+    gzip            : bool;
+}
 
 config : Config;
 
@@ -58,7 +67,6 @@ accept_token :: (ch: string) #expand {
         return ch, `s, true;
     }
 }
-
 
 peek_next_token :: (st: *string) -> (tok: string, remainder: string, found: bool) {
     // Yes I guess we are making a tokenizer.
@@ -107,7 +115,7 @@ get_next_token :: (st: *string) -> (tok: string, found: bool) {
     return tok, found;
 }
 
-eat_token :: (input: *string, eat: string) {
+eat_token :: inline (input: *string, eat: string) {
     tok, found := get_next_token(input);
     if tok != eat error(tprint("Config: Expecting '%', got '%'\n", eat, tok));
 }
@@ -116,26 +124,26 @@ parse_statement :: (input: *string, using cur_server: *ServerConfig) {
     tok, found := get_next_token(input);
     temp : string;
     set : []Any;
-    if tok == {
-        case "listen";
-            // Format here is "<port>" or "<ip>:<port>", or "<host>:<port>".
-            // IPv6 addresses are "[<ip>]".
-            temp = copy_string(get_next_token(input));
-            // Try port only first:
-            found, set = scan("%i", temp);
+    if tok == "listen" {
+        // Format here is "<port>" or "<ip>:<port>", or "<host>:<port>".
+        // IPv6 addresses are "[<ip>]".
+        temp = copy_string(get_next_token(input));
+        // Try port only first:
+        found, set = scan("%i", temp);
+        if found {
+            listen_port = any_as(set[0], u16);
+        } else {
+            port, found := find_character_from_left(temp, #char ":");
             if found {
-                listen_port = any_as(set[0], u16);
-            } else {
-                port, found := find_character_from_left(temp, #char ":");
-                if found {
-                    temp.count -= port.count;
-                    found, set = scan(":%i", port);
-                    if found { listen_port = any_as(set[0], u16); return; }
-                }
-                listen_host = copy_string(temp);
+                temp.count -= port.count;
+                found, set = scan(":%i", port);
+                if found { listen_port = any_as(set[0], u16); return; }
             }
-        case "server_name";
-            server_name = get_next_token(input);
+            listen_host = copy_string(temp);
+        }
+    }
+    if tok == "server_name" { server_name = get_next_token(input); }
+    if tok == {
         case "root";
             root = trim_right(get_next_token(input), "/");
         case "index";
@@ -183,13 +191,23 @@ parse_config_file :: (filename: string) {
     init(*handler, filename);
     defer deinit(*handler);
 
+    parse_block(*config, *file_data, true);
+    /*
     while true {
         tok, found := get_next_token(*file_data);
-        if found && tok == "server" {
+        if !found break;
+
+        if tok == "server" {
             parse_config_server(*file_data);
+        } else if tok == "http" {
+            http := New(HTTPConfig);
+            block := parse_block(http, *file_data);
+            print("Block: %", block);
+        } else {
+            error("Unexpected token % in config file.", tok);
         }
-        else break;
     }
+    */
 }
 
 ConfigFile :: struct {
@@ -200,41 +218,162 @@ ConfigFile :: struct {
     col             : int = 0;
 }
 
-/*
-ConfigBlock :: struct {
-    blocktype           : Type;
-    allowed_directives  : Table(string, ConfigDirective);
+
+// Advanced parsing test {{
+#import "Reflection";
+
+has_note :: (m: $T, n: string) -> bool {
+    for note:m.notes {
+        if note == n return true;
+    }
+    return false;
 }
 
-ConfigDirectiveHandler :: #type (tokens: [..]string) -> bool;
-
-ConfigDirective :: struct {
-    name            : string;
-    parameters      : int;
-    handler         : ConfigDirectiveHandler;
+get_note :: (m: $T, n: string) -> string, found:bool {
+    for note:m.notes {
+        if begins_with(note, n) {
+            while note[0] != #char ":" advance(*note);
+            advance(*note);
+            return note, true;
+        }
+    }
+    return "", false;
 }
 
-config_blocks : Table(string, ConfigBlock);
-
-create_block :: (name: string, type: Type) {
-    block : ConfigBlock;
-    block.type = type;
-    table_add(*config_blocks, name, block);
-}
-
-create_directive :: (parameters: int, handler: ConfigDirectiveHandler) -> ConfigDirective {
-    dir : ConfigDirective;
-    dir.parameters = parameters;
-    dir.handler = handler;
-    return dir;
+any :: (needle: $T, haystack: []$U) -> bool {
+    for m:haystack {
+        #if U == T {
+            if m == needle return true;
+        } else {
+            if m.name == needle return true;
+        }
+    }
+    return false;
 }
 
 
-init_directives :: () {
-    block := create_block("CORE");
-    add_config_directive(block, "pidfile", create_directive(1, set_pidfile));
+inject_token :: (data: $T, member: $U, token: string) {
+    BOOL_VALUES_TRUE  :: string.["true", "on", "1"];
+    BOOL_VALUES_FALSE :: string.["false", "off", "0"];
+
+    out: Any;
+    out.value_pointer = (cast(*u8)data) + member.offset_in_bytes;
+    out.type = member.type;
+    rhs : string;
+    if member.type == type_info(bool) {
+        if any(token, BOOL_VALUES_TRUE)         { rhs = "true";
+        } else if any(token, BOOL_VALUES_FALSE) { rhs = "false";
+        } else error("Unknown boolean value '%'", token);
+    } else if member.type == type_info(string) {
+        str := copy_string(token);
+        (cast(*string)out.value_pointer).data = str.data;
+        (cast(*string)out.value_pointer).count = str.count;
+        return;
+    } else if member.type == type_info(u32) {
+        rhs = token;
+    } else {
+        print("Dunno how to handle type on %.\n", member.name);
+    }
+    set_value_from_string(out, rhs);
 }
-*/
+
+get_member_pointer :: (data: $T, member: $U) -> Any {
+    out: Any;
+    out.value_pointer = (cast(*u8)data) + member.offset_in_bytes;
+    out.type = member.type;
+    return out;
+}
+
+parse_block :: (target: $T, input: *string, bare_block := false, target_info: *Type_Info_Struct = null) {
+    info : *Type_Info_Struct;
+    if target_info info = target_info;
+    else info = xx type_info(type_of(<< target));
+    print(">>> Parse block (target: %)\n", <<info);
+
+    if !bare_block {
+        for member:info.members {
+            if has_note(member, "preblock") {
+                tok := get_next_token(input);
+                inject_token(target, member, tok);
+            }
+        }
+        eat_token(input, "{");
+    }
+
+    while true {
+        tok, found := peek_next_token(input);
+        if !found break;                // End of stream?
+        if !bare_block && tok == "}" {  // Are we at the end of the block?
+            break;
+        } else {                        // Okay let's check if we have a block..
+            key := get_next_token(input);
+            member := get_field(info, key);
+
+            if member == null {
+                for m:info.members {
+                    // TODO: Can we not require block annotations?
+                    blockname, found := get_note(m, "block:");
+                    if found {
+                        // Found a block info.
+                        member = *m;
+                        blocktype : *Type_Info_Struct;
+                        if member.type.type == .ARRAY {
+                            type : *Type_Info_Array = xx member.type;
+                            if type.element_type.type == .POINTER {
+                                pointer_type : *Type_Info_Pointer = xx type.element_type;
+                                blocktype = xx pointer_type.pointer_to;
+                            }
+                        }
+                        if !blocktype error("Couldn't find blocktype");
+                        pointer := alloc(blocktype.runtime_size);
+                        if blocktype.initializer {
+                            blocktype.initializer(target);
+                        } else {
+                            memset(target, 0, blocktype.runtime_size);
+                        }
+                        parse_block(pointer, input, target_info=blocktype);
+                        // No wait we want to add to an array!
+                        destination := get_member_pointer(target, member);
+                        //array_add(destination, pointer);
+                        // inject_pointer(target, member, pointer);
+                        break;
+                    }
+                }
+
+                if member == null {
+                    for m:info.members {
+                        blockname, found := get_note(m, "compound:");
+                        if found && blockname == key {
+                            // Found a compound block
+                        }
+                    }
+                }
+            } else { // A regular statement.
+                if member == null error("Unknown identifier '%' in config file.", tok);
+                if has_note(member, "noconfig") error("'%' is not configurable.", tok);
+                if has_note(member, "preblock") error("Trying to assign a block designation variable.");
+
+                value := get_next_token(input);
+                inject_token(target, member, value);
+                eat_token(input, ";");
+            }
+
+        }
+    }
+    if !bare_block eat_token(input, "}");
+    print("<<< Parse Block\n");
+
+    print("Data: %\n", <<target);
+}
+
+config_blocks : Table(string, Type);
+init_blocks :: () {
+    table_add(*config_blocks, "CORE", Config);
+    table_add(*config_blocks, "server", ServerConfig);
+    table_add(*config_blocks, "http", HTTPConfig);
+}
+
+// }}
 
 deinit :: (x: *ConfigFile) { free(x.orig_file_data); }
 init :: (using x: *ConfigFile, path: string) {

@@ -9,7 +9,9 @@ some skills. It's not intended as more than a plaything.
 
 ## Building and running
 
-Just run:
+Depends on my Socket and Datetime libaries being in `lib/`
+
+Run:
 ```
 $ jai build.jai
 ```
