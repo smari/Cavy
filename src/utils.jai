@@ -2,17 +2,6 @@
 // Hypothetically most of this belongs in the standard library
 //  or at least some easily available module.
 
-// File/socket tools:
-
-write :: (fd: s32, buf: string, args: ..Any) -> s64 {
-    tmp := tprint(buf, ..args);
-    return write(fd, tmp.data, xx tmp.count);
-}
-
-write :: (fd: s32, buf: string) -> s64 {
-    return write(fd, buf.data, xx buf.count);
-}
-
 // Error/warning/notice printing
 // TODO: Add syslog support.
 notice :: (msg: string, args: ..Any) {

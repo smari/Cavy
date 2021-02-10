@@ -5,7 +5,7 @@
 #run {
     set_working_directory(#filepath);
     build_options := get_build_options();
-    build_options.output_type = Build_Output_Type.NO_OUTPUT;
+    build_options.output_type = .NO_OUTPUT;
     array_add(*build_options.modules_search_path_array, "lib/");
     set_build_options(build_options);
 
@@ -45,7 +45,7 @@
         exit(1);
     }
 
-    build_options.output_type = Build_Output_Type.EXECUTABLE;
+    build_options.output_type = .EXECUTABLE;
     build_options.output_executable_name = "cavy";
     build_options.output_path = "";
     set_build_options(build_options, w);
@@ -64,7 +64,7 @@
             continue;
         }
 
-        if message.kind == Compiler_Message.Kind.COMPLETE {
+        if message.kind == .COMPLETE {
             break; // Done compiling.
         }
     }

@@ -288,7 +288,7 @@ parse_block :: (target: $T, input: *string, bare_block := false, target_info: *T
     info : *Type_Info_Struct;
     if target_info info = target_info;
     else info = xx type_info(type_of(<< target));
-    print(">>> Parse block (target: %)\n", <<info);
+    print(">>> Parse block (target: %)\n", info.name);
 
     if !bare_block {
         for member:info.members {
